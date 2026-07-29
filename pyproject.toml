@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hm3d-semantic-reconstruction"
+version = "0.1.0"
+description = "HM3D-Semantic synchronized RGB-D ground-truth dataset capture"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.23", "Pillow>=9"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["hm3d_reconstruction*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires Habitat-Sim and a real HM3D scene"]
+

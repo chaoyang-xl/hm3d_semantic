@@ -1,0 +1,72 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+
+# Local environments and secrets
+.venv/
+venv/
+env/
+.conda/
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# Logs, profiling, and native crash dumps
+*.log
+*.prof
+core
+core.*
+
+# HM3D/Habitat assets are large and must stay outside Git
+*.glb
+*.navmesh
+*.semantic.txt
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tgz
+*.zip
+*.7z
+
+# Local datasets and generated capture/reconstruction artifacts
+data/
+datasets/
+exports/
+outputs/
+output/
+captures/
+reconstruction_outputs/
+reconstructions/
+runs/
+artifacts/
+
+# Transactional exporter working copies and backups
+*.partial/
+*.previous/
+
+# Local task notes
+todo.md

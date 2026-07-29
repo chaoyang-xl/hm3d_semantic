@@ -1,0 +1,12 @@
+name: hm3d_reconstruction
+channels:
+  - conda-forge
+  - aihabitat
+dependencies:
+  - python=3.9
+  - habitat-sim=0.3.3
+  - withbullet
+  - pip
+  - pip:
+      - -e .[test]
+

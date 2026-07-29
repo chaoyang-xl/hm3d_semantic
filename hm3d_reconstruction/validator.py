@@ -33,9 +33,15 @@ def validate_dataset(
         metadata = json.loads((root/"metadata.json").read_text())
         semantic_metadata = json.loads((root/"semantic_metadata.json").read_text())
         poses = read_traj_gt(root/"traj_gt.txt")
+        replica_poses = read_traj_gt(root/"traj.txt")
     except Exception as exc:
         result.errors.append(str(exc))
         return result
+    replica_compatible = replica_poses.shape == poses.shape and np.allclose(
+        replica_poses, poses, atol=1e-9
+    )
+    if not replica_compatible:
+        result.errors.append("traj.txt differs from traj_gt.txt")
     required = {"w","h","fx","fy","cx","cy","scale"}
     if not required.issubset(camera):
         result.errors.append("cam_params fields missing")
@@ -84,7 +90,14 @@ def validate_dataset(
     translations = np.linalg.norm(np.diff(poses[:,:3,3], axis=0), axis=1) if count>1 else np.array([0.])
     if translations.max() > 1.0:
         (result.errors if strict else result.warnings).append("abnormal adjacent pose translation")
-    result.checks = {"frame_count": count, "sampled_frames": len(indices), "resolution": [camera["w"],camera["h"]], "unmatched_semantic_ids": unmatched, "max_translation_m": float(translations.max())}
+    result.checks = {
+        "frame_count": count,
+        "sampled_frames": len(indices),
+        "resolution": [camera["w"], camera["h"]],
+        "replica_trajectory_compatible": bool(replica_compatible),
+        "unmatched_semantic_ids": unmatched,
+        "max_translation_m": float(translations.max()),
+    }
     if write_preview and not result.errors:
         write_previews(root,indices[:8].tolist(),metadata.get("semantic_enabled",False))
         trajectory=json.loads((root/"trajectory.json").read_text())["frames"]

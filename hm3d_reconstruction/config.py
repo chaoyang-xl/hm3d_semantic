@@ -15,6 +15,7 @@ class CaptureConfig:
     height: int = 480
     hfov_deg: float = 79.0
     sensor_height: float = 0.88
+    display_scale: float = 1.5
     min_depth_m: float = 0.05
     max_depth_m: float = 10.0
     trajectory_mode: str = "waypoint"
@@ -34,6 +35,8 @@ class CaptureConfig:
             raise ValueError(f"scene dataset config not found: {self.scene_dataset_config}")
         if self.frames <= 0 or self.width <= 0 or self.height <= 0:
             raise ValueError("frames and resolution must be positive")
+        if not 0.5 <= self.display_scale <= 3.0:
+            raise ValueError("display_scale must be in [0.5, 3.0]")
         if not 0 < self.hfov_deg < 180:
             raise ValueError("hfov must be in (0, 180)")
         if self.forward_step <= 0 or not 0 < self.turn_angle_deg <= 180:
@@ -42,8 +45,10 @@ class CaptureConfig:
             raise ValueError("alignment tolerance must be in [0, 45]")
         if self.min_depth_m < 0 or self.max_depth_m <= self.min_depth_m:
             raise ValueError("invalid depth range")
-        if self.trajectory_mode not in {"waypoint", "replay"}:
-            raise ValueError("first-stage exporter supports waypoint and replay")
+        if self.trajectory_mode not in {"waypoint", "interactive", "replay"}:
+            raise ValueError(
+                "trajectory_mode must be waypoint, interactive, or replay"
+            )
         if self.trajectory_mode == "replay" and self.trajectory_file is None:
             raise ValueError("replay requires trajectory_file")
 

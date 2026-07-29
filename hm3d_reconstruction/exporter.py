@@ -91,9 +91,12 @@ def export_dataset(
             total_depth += depth.size
             poses.append(frame.pose_gt)
             trajectory.append(frame.trajectory)
-        if len(poses) != config.frames:
+        if not poses:
+            raise RuntimeError("capture produced no recorded frames")
+        if config.trajectory_mode != "interactive" and len(poses) != config.frames:
             raise RuntimeError(f"wrote {len(poses)} frames, expected {config.frames}")
         write_traj_gt(partial/"traj_gt.txt", poses)
+        write_traj_gt(partial/"traj.txt", poses)
         write_json(partial/"trajectory.json", {"frames": trajectory})
         metadata = {
             "schema_version": 1,
@@ -105,6 +108,7 @@ def export_dataset(
             "world_convention": "habitat_y_up",
             "scene": str(config.scene.resolve()),
             "trajectory_mode": config.trajectory_mode,
+            "capture_stop_reason": getattr(source, "stop_reason", "frame_limit"),
             "semantic_enabled": config.save_semantic,
         }
         write_json(partial/"metadata.json", metadata)
@@ -123,6 +127,10 @@ def export_dataset(
             "max_frame_translation_m": float(steps.max()),
             "turn_in_place_frames": sum(f["action"]=="turn_in_place" for f in trajectory),
             "move_forward_frames": sum(f["action"]=="move_forward" for f in trajectory),
+            "move_backward_frames": sum(f["action"]=="move_backward" for f in trajectory),
+            "interactive_turn_frames": sum(
+                f["action"] in {"turn_left", "turn_right"} for f in trajectory
+            ),
             "elapsed_seconds": time.monotonic()-started,
         }
         write_json(partial/"export_report.json", report)
@@ -134,8 +142,11 @@ def export_dataset(
         validation = validate_dataset(partial, sample_count=config.frames, strict=True)
         if not validation.valid:
             raise RuntimeError("pre-publication validation failed: " + "; ".join(validation.errors))
+        keep_partial = bool(getattr(source, "keep_partial", False))
         source.close()
         source = None
+        if keep_partial:
+            return partial
         _publish(partial, output, config.overwrite)
         return output
     except Exception as exc:

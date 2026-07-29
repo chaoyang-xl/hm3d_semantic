@@ -11,21 +11,91 @@ from hm3d_reconstruction.exporter import export_dataset
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Export synchronized HM3D GT RGB-D-Semantic")
-    p.add_argument("--scene", required=True, type=Path)
-    p.add_argument("--scene-dataset-config", required=True, type=Path)
-    p.add_argument("--output", required=True, type=Path)
-    p.add_argument("--frames", type=int, default=100)
-    p.add_argument("--width", type=int, default=640); p.add_argument("--height", type=int, default=480)
-    p.add_argument("--hfov-deg", type=float, default=79); p.add_argument("--sensor-height", type=float, default=0.88)
-    p.add_argument("--min-depth-m", type=float, default=0.05); p.add_argument("--max-depth-m", type=float, default=10)
-    p.add_argument("--trajectory-mode", choices=("waypoint","replay"), default="waypoint")
-    p.add_argument("--trajectory-file", type=Path)
-    p.add_argument("--forward-step", type=float, default=0.10); p.add_argument("--turn-angle-deg", type=float, default=5)
-    p.add_argument("--alignment-tolerance-deg", type=float, default=10)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--save-semantic", action=argparse.BooleanOptionalAction, default=True)
-    p.add_argument("--preview", action="store_true"); p.add_argument("--overwrite", action="store_true")
+    p = argparse.ArgumentParser(
+        description="Export synchronized HM3D RGB-D, semantic IDs, and GT poses",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "--scene", required=True, type=Path,
+        help="HM3D render asset, normally a .basis.glb file",
+    )
+    p.add_argument(
+        "--scene-dataset-config", required=True, type=Path,
+        help="Habitat scene_dataset_config.json used to load the scene",
+    )
+    p.add_argument(
+        "--output", required=True, type=Path,
+        help=(
+            "output dataset directory; relative paths resolve against the current "
+            "working directory; no default"
+        ),
+    )
+    p.add_argument(
+        "--frames", type=int, default=100,
+        help=(
+            "exact frame count for waypoint/replay; maximum recorded frame count "
+            "for interactive mode"
+        ),
+    )
+    p.add_argument("--width", type=int, default=640, help="image width in pixels")
+    p.add_argument("--height", type=int, default=480, help="image height in pixels")
+    p.add_argument(
+        "--hfov-deg", type=float, default=79,
+        help="horizontal camera field of view in degrees",
+    )
+    p.add_argument(
+        "--sensor-height", type=float, default=0.88,
+        help="camera height above the agent base in metres",
+    )
+    p.add_argument(
+        "--display-scale", type=float, default=1.5,
+        help="interactive preview scale only; saved image resolution is unchanged",
+    )
+    p.add_argument(
+        "--min-depth-m", type=float, default=0.05,
+        help="minimum valid saved depth in metres",
+    )
+    p.add_argument(
+        "--max-depth-m", type=float, default=10,
+        help="maximum valid saved depth in metres",
+    )
+    p.add_argument(
+        "--trajectory-mode",
+        choices=("waypoint", "interactive", "replay"),
+        default="waypoint",
+        help="camera trajectory source",
+    )
+    p.add_argument(
+        "--trajectory-file", type=Path,
+        help="JSON position/quaternion trajectory; required only for replay mode",
+    )
+    p.add_argument(
+        "--forward-step", type=float, default=0.10,
+        help="waypoint or keyboard movement distance per step in metres",
+    )
+    p.add_argument(
+        "--turn-angle-deg", type=float, default=5,
+        help="waypoint or keyboard rotation per step in degrees",
+    )
+    p.add_argument(
+        "--alignment-tolerance-deg", type=float, default=10,
+        help="waypoint heading tolerance before translation, in degrees",
+    )
+    p.add_argument("--seed", type=int, default=42, help="random start/path seed")
+    p.add_argument(
+        "--save-semantic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="save Habitat semantic instance images; disable with --no-save-semantic",
+    )
+    p.add_argument(
+        "--preview", action="store_true",
+        help="write RGB/depth/semantic mosaics and a top-down trajectory image",
+    )
+    p.add_argument(
+        "--overwrite", action="store_true",
+        help="replace an existing non-empty output directory transactionally",
+    )
     return p
 
 

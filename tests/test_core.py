@@ -9,6 +9,9 @@ from hm3d_reconstruction.coordinate import (
 )
 from hm3d_reconstruction.depth import depth_meters_to_uint16_mm
 from hm3d_reconstruction.intrinsics import compute_pinhole_intrinsics
+from hm3d_reconstruction.simulator import (
+    TkInteractiveWindow, interactive_displacement,
+)
 from hm3d_reconstruction.trajectory import turn_toward
 
 
@@ -38,4 +41,16 @@ def test_depth_conversion():
 
 def test_turn_is_bounded():
     assert turn_toward(0,math.pi,math.radians(5)) == pytest.approx(-math.radians(5))
+
+
+def test_interactive_displacement_follows_habitat_heading():
+    np.testing.assert_allclose(interactive_displacement(0.0, 0.1), [0, 0, -0.1])
+    np.testing.assert_allclose(
+        interactive_displacement(-math.pi / 2, 0.1), [0.1, 0, 0], atol=1e-9
+    )
+
+
+def test_interactive_key_map():
+    assert TkInteractiveWindow.KEY_COMMANDS["w"] == "forward"
+    assert TkInteractiveWindow.KEY_COMMANDS["escape"] == "abort"
 

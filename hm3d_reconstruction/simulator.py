@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
@@ -28,6 +30,109 @@ class CapturedFrame:
     semantic: Optional[np.ndarray]
     pose_gt: np.ndarray
     trajectory: dict
+
+
+class InteractiveCaptureAborted(RuntimeError):
+    """Signal operator cancellation while retaining transactional output."""
+
+
+def interactive_displacement(yaw: float, distance: float) -> np.ndarray:
+    """Return a Habitat-world displacement along the current heading."""
+    return np.array(
+        [-math.sin(yaw) * distance, 0.0, -math.cos(yaw) * distance],
+        dtype=np.float64,
+    )
+
+
+class TkInteractiveWindow:
+    """Live RGB viewer with a non-blocking keyboard command queue."""
+
+    KEY_COMMANDS = {
+        "w": "forward",
+        "s": "backward",
+        "a": "left",
+        "d": "right",
+        "r": "record",
+        "p": "pause",
+        "q": "save",
+        "escape": "abort",
+    }
+
+    def __init__(self, width: int, height: int, scale: float = 1.5):
+        try:
+            import tkinter as tk
+            from PIL import ImageTk
+        except ImportError as exc:
+            raise RuntimeError(
+                "interactive mode requires Tk and Pillow ImageTk"
+            ) from exc
+        try:
+            self.root = tk.Tk()
+        except tk.TclError as exc:
+            raise RuntimeError(
+                "interactive mode requires a graphical display (DISPLAY)"
+            ) from exc
+        self._tk = tk
+        self._image_tk = ImageTk
+        self._commands = deque()
+        self._closed = False
+        self.root.title("HM3D interactive capture")
+        self.display_size = (
+            max(1, int(round(width * scale))),
+            max(1, int(round(height * scale))),
+        )
+        self.canvas = tk.Label(self.root)
+        self.canvas.pack()
+        self.status = tk.Label(self.root, anchor="w", padx=8, pady=5)
+        self.status.pack(fill="x")
+        self.root.bind("<KeyPress>", self._on_key)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.focus_force()
+        self._photo = None
+
+    def _on_key(self, event) -> None:
+        command = self.KEY_COMMANDS.get(str(event.keysym).casefold())
+        if command is not None:
+            self._commands.append(command)
+
+    def _on_close(self) -> None:
+        if not self._closed:
+            self._commands.append("abort")
+            self._closed = True
+
+    def wait_command(
+        self, rgb: np.ndarray, recording: bool, frames: int, maximum: int
+    ) -> str:
+        from PIL import Image
+
+        image = np.asarray(rgb)
+        if image.ndim != 3 or image.shape[2] < 3:
+            raise ValueError("interactive RGB preview must be HxWx3 or HxWx4")
+        preview = Image.fromarray(image[:, :, :3])
+        if preview.size != self.display_size:
+            resampling = getattr(Image, "Resampling", Image)
+            preview = preview.resize(self.display_size, resampling.BILINEAR)
+        self._photo = self._image_tk.PhotoImage(preview)
+        self.canvas.configure(image=self._photo)
+        state = "RECORDING" if recording else "PAUSED"
+        self.status.configure(text=f"{state}    frames {frames}/{maximum}")
+        while not self._commands:
+            if self._closed:
+                return "abort"
+            try:
+                self.root.update_idletasks()
+                self.root.update()
+            except self._tk.TclError:
+                return "abort"
+            time.sleep(0.01)
+        return self._commands.popleft()
+
+    def close(self) -> None:
+        self._closed = True
+        try:
+            self.root.destroy()
+        except self._tk.TclError:
+            pass
 
 
 def import_habitat_sim():
@@ -74,6 +179,9 @@ class HabitatCapture:
             raise RuntimeError("semantic scene contains no instance metadata")
         self.navigable_area = float(self.sim.pathfinder.navigable_area)
         self.collision_count = 0
+        self._interactive_window = None
+        self.stop_reason = "frame_limit"
+        self.keep_partial = False
         self._initialize()
 
     def _create(self):
@@ -215,6 +323,77 @@ class HabitatCapture:
                 targets.pop(0)
             action = "move_forward"
 
+    def _interactive_move(self, forward: bool) -> tuple[str, bool]:
+        state = self.agent.get_state()
+        current = np.asarray(state.position, dtype=np.float64)
+        yaw = yaw_from_quaternion_xyzw(quaternion_to_xyzw(state.rotation))
+        distance = self.config.forward_step * (1.0 if forward else -1.0)
+        target = current + interactive_displacement(yaw, distance)
+        filtered = np.asarray(self.sim.pathfinder.try_step(current, target), float)
+        moved = float(np.linalg.norm(filtered-current))
+        collision = moved + 1e-5 < abs(distance)
+        self.collision_count += int(collision)
+        self._set_state(filtered, yaw)
+        return ("move_forward" if forward else "move_backward"), collision
+
+    def _interactive_turn(self, left: bool) -> tuple[str, bool]:
+        state = self.agent.get_state()
+        position = np.asarray(state.position, dtype=np.float64)
+        yaw = yaw_from_quaternion_xyzw(quaternion_to_xyzw(state.rotation))
+        delta = math.radians(self.config.turn_angle_deg)
+        self._set_state(position, yaw + (delta if left else -delta))
+        return ("turn_left" if left else "turn_right"), False
+
+    def _interactive_frames(self) -> Iterator[CapturedFrame]:
+        window = TkInteractiveWindow(
+            self.config.width, self.config.height, self.config.display_scale
+        )
+        self._interactive_window = window
+        recording = False
+        captured = 0
+        preview = self._capture(0, "preview", False)
+        while captured < self.config.frames:
+            command = window.wait_command(
+                preview.rgb, recording, captured, self.config.frames
+            )
+            if command == "abort":
+                self.stop_reason = "operator_abort"
+                if captured == 0:
+                    raise InteractiveCaptureAborted(
+                        "interactive capture aborted before recording started"
+                    )
+                self.keep_partial = True
+                return
+            if command == "save":
+                if captured == 0:
+                    continue
+                self.stop_reason = "operator_save"
+                return
+            if command == "record":
+                recording = True
+                if captured == 0:
+                    preview = self._capture(captured, "record_start", False)
+                    captured += 1
+                    yield preview
+                continue
+            if command == "pause":
+                recording = False
+                continue
+            action, collision = "preview", False
+            if command == "forward":
+                action, collision = self._interactive_move(True)
+            elif command == "backward":
+                action, collision = self._interactive_move(False)
+            elif command == "left":
+                action, collision = self._interactive_turn(True)
+            elif command == "right":
+                action, collision = self._interactive_turn(False)
+            preview = self._capture(captured, action, collision)
+            if recording:
+                captured += 1
+                yield preview
+        self.stop_reason = "frame_limit"
+
     def _replay_frames(self) -> Iterator[CapturedFrame]:
         if len(self.replay) < self.config.frames:
             raise ValueError("replay has fewer states than requested frames")
@@ -228,9 +407,13 @@ class HabitatCapture:
     def frames(self) -> Iterator[CapturedFrame]:
         if self.config.trajectory_mode == "waypoint":
             yield from self._waypoint_frames()
+        elif self.config.trajectory_mode == "interactive":
+            yield from self._interactive_frames()
         else:
             yield from self._replay_frames()
 
     def close(self) -> None:
+        if self._interactive_window is not None:
+            self._interactive_window.close()
         self.sim.close()
 

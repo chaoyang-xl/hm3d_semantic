@@ -14,6 +14,7 @@ from .coordinate import (
     quaternion_xyzw_to_matrix,
 )
 from .semantic import extract_semantic_metadata
+from .occupancy import RosOccupancyMap, occupancy_from_pathfinder
 from .sensors import (
     COLOR_UUID, DEPTH_UUID, SEMANTIC_UUID, camera_sensor_spec,
 )
@@ -566,6 +567,23 @@ class HabitatCapture:
             yield from self._interactive_frames()
         else:
             yield from self._replay_frames()
+
+    def build_ros_occupancy_map(
+        self,
+        resolution: float,
+        floor_height: float,
+        height_tolerance: float,
+        reference_position: np.ndarray,
+        min_island_area: float,
+    ) -> RosOccupancyMap:
+        return occupancy_from_pathfinder(
+            self.sim.pathfinder,
+            resolution=resolution,
+            floor_height=floor_height,
+            height_tolerance=height_tolerance,
+            reference_position=reference_position,
+            min_island_area=min_island_area,
+        )
 
     def close(self) -> None:
         if self._interactive_window is not None:

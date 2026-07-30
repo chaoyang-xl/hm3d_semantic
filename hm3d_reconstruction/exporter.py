@@ -15,6 +15,8 @@ from .dataset import (
 )
 from .depth import depth_meters_to_uint16_mm
 from .intrinsics import compute_pinhole_intrinsics
+from .exploration import simulate_lidar_exploration
+from .occupancy import write_ros_occupancy_map
 from .simulator import HabitatCapture
 from .visualization import write_previews, write_trajectory
 
@@ -102,6 +104,38 @@ def export_dataset(
             [habitat_c2w_to_map_z_up(pose) for pose in poses],
         )
         write_json(partial/"trajectory.json", {"frames": trajectory})
+        ros_map_metadata = None
+        if config.export_ros_map:
+            positions = np.asarray(
+                [frame["agent_position"] for frame in trajectory],
+                dtype=np.float64,
+            )
+            floor_height = (
+                float(config.map_floor_height_m)
+                if config.map_floor_height_m is not None
+                else float(np.median(positions[:, 1]))
+            )
+            occupancy = source.build_ros_occupancy_map(
+                resolution=config.map_resolution_m,
+                floor_height=floor_height,
+                height_tolerance=config.map_height_tolerance_m,
+                reference_position=positions[0],
+                min_island_area=config.map_min_island_area_m2,
+            )
+            exploration_metadata = {"map_mode": "ground_truth"}
+            if config.map_mode == "explored":
+                positions_xy = np.column_stack((
+                    positions[:, 0], -positions[:, 2],
+                ))
+                occupancy, exploration_metadata = simulate_lidar_exploration(
+                    occupancy,
+                    positions_xy=positions_xy,
+                    ray_count=config.map_ray_count,
+                    max_range_m=config.map_max_range_m,
+                )
+            write_ros_occupancy_map(partial, occupancy)
+            ros_map_metadata = occupancy.metadata()
+            ros_map_metadata.update(exploration_metadata)
         metadata = {
             "schema_version": 1,
             "dataset_type": "hm3d_semantic_gt_rgbd",
@@ -118,7 +152,10 @@ def export_dataset(
             "trajectory_mode": config.trajectory_mode,
             "capture_stop_reason": getattr(source, "stop_reason", "frame_limit"),
             "semantic_enabled": config.save_semantic,
+            "ros_map_enabled": config.export_ros_map,
         }
+        if ros_map_metadata is not None:
+            metadata["ros_map"] = ros_map_metadata
         write_json(partial/"metadata.json", metadata)
         positions = np.asarray([f["agent_position"] for f in trajectory])
         steps = np.linalg.norm(np.diff(positions, axis=0), axis=1) if len(positions)>1 else np.array([0.])
@@ -141,6 +178,8 @@ def export_dataset(
             ),
             "elapsed_seconds": time.monotonic()-started,
         }
+        if ros_map_metadata is not None:
+            report["ros_map"] = ros_map_metadata
         write_json(partial/"export_report.json", report)
         if config.preview:
             indices=np.linspace(0,len(poses)-1,min(8,len(poses)),dtype=int).tolist()

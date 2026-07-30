@@ -93,6 +93,44 @@ def parser() -> argparse.ArgumentParser:
         help="save Habitat semantic instance images; disable with --no-save-semantic",
     )
     p.add_argument(
+        "--export-ros-map",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="export map.pgm and map.yaml from the recorded floor's NavMesh",
+    )
+    p.add_argument(
+        "--map-resolution-m", type=float, default=0.05,
+        help="ROS occupancy map resolution in metres per pixel",
+    )
+    p.add_argument(
+        "--map-floor-height-m", type=float,
+        help=(
+            "Habitat Y coordinate used for the map slice; defaults to the "
+            "median recorded agent height"
+        ),
+    )
+    p.add_argument(
+        "--map-height-tolerance-m", type=float, default=0.20,
+        help="vertical tolerance for the Habitat NavMesh slice",
+    )
+    p.add_argument(
+        "--map-min-island-area-m2", type=float, default=1.0,
+        help="ignore disconnected NavMesh islands smaller than this area",
+    )
+    p.add_argument(
+        "--map-mode", choices=("ground_truth", "explored"),
+        default="ground_truth",
+        help="export the full floor or only areas revealed along the trajectory",
+    )
+    p.add_argument(
+        "--map-ray-count", type=int, default=720,
+        help="number of ideal 360-degree lidar rays per explored map scan",
+    )
+    p.add_argument(
+        "--map-max-range-m", type=float, default=10.0,
+        help="maximum ideal lidar range used by explored map mode",
+    )
+    p.add_argument(
         "--preview", action="store_true",
         help="write RGB/depth/semantic mosaics and a top-down trajectory image",
     )

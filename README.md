@@ -1,8 +1,8 @@
 # HM3D RGB-D 语义重建数据生成工具
 
-基于 [Habitat-Sim](https://github.com/facebookresearch/habitat-sim) 的 HM3D 室内场景数据采集工具。项目可以在 Habitat 可导航区域内自动运动、键盘遥控或回放已有轨迹，并同步导出 RGB、米制深度、语义实例 ID 和相机真值位姿。
+基于 [Habitat-Sim](https://github.com/facebookresearch/habitat-sim) 的 HM3D 室内场景数据采集工具。项目可以在 Habitat 可导航区域内自动运动、键盘遥控或回放已有轨迹，并同步导出 RGB、米制深度、语义实例 ID、相机真值位姿和 ROS 2D 占据地图。
 
-本仓库只负责**仿真数据生成与数据集校验**，不直接依赖 ROS、SLAM、YOLO、SAM 或对象跟踪框架。生成的数据兼容 Replica 风格的离线 RGB-D 处理流程，可交给外部 `semantic_map_offline` 包完成 YOLO-World、MobileSAM、点云投影、对象关联和语义地图生成。
+本仓库只负责**仿真数据生成与数据集校验**，不直接依赖 ROS、SLAM、YOLO、SAM 或对象跟踪框架。ROS 地图采用 map_server 通用的 YAML/PGM 文件格式，因此生成数据既兼容 Replica 风格的离线 RGB-D 处理流程，也可交给外部 `semantic_map_offline` 和 `semantic_room_pkg` 完成对象建图与房间推理。
 
 ## 目录
 
@@ -16,6 +16,7 @@
 - [三种轨迹模式](#三种轨迹模式)
 - [导出参数](#导出参数)
 - [输出数据格式](#输出数据格式)
+- [ROS 占据地图与房间推理](#ros-占据地图与房间推理)
 - [坐标系约定](#坐标系约定)
 - [数据校验](#数据校验)
 - [语义点云重建](#语义点云重建)
@@ -35,6 +36,7 @@
 - Waypoint 和 Interactive 的平移通过 Habitat `PathFinder.try_step()` 约束，不穿墙。
 - 导出过程使用 `.partial` 临时目录，校验成功后再发布正式数据。
 - 保留 Habitat Y-up 原始 GT，同时生成下游建图使用的 Z-up `traj.txt`。
+- 可从指定楼层的 NavMesh 导出完整真值地图，或沿轨迹模拟 360° 激光生成带未知区域的 SLAM 风格地图。
 - 提供独立校验器，检查帧数、分辨率、深度类型、位姿和语义 ID。
 - 可选生成 RGB、深度、语义预览图和轨迹俯视图。
 
@@ -60,11 +62,20 @@ OpenCV 光学坐标相机位姿
 严格校验与预览
         |
         +------------------------------+
+        |                              v
+        |                    ROS map.pgm + map.yaml
+        |
+        +------------------------------+
                                        v
                          YOLO-World + MobileSAM
                                        |
                                        v
                          语义对象 PLY / NPZ / JSON
+                                       |
+                  map.yaml + semantic_objects.json
+                                       |
+                                       v
+                         semantic_room_pkg 房间推理
 ```
 
 ## 项目结构
@@ -76,6 +87,8 @@ OpenCV 光学坐标相机位姿
 │   ├── coordinate.py      # OpenCV、Habitat 和 Z-up 坐标转换
 │   ├── dataset.py         # RGB-D、语义图、轨迹文件读写
 │   ├── exporter.py        # 事务式数据集导出
+│   ├── exploration.py     # 沿轨迹模拟二维激光探索
+│   ├── occupancy.py       # Habitat NavMesh 到 ROS 占据地图
 │   ├── simulator.py       # Habitat-Sim、运动逻辑和交互窗口
 │   ├── trajectory.py      # 航向角、四元数和轨迹回放
 │   ├── validator.py       # 独立数据集校验
@@ -352,6 +365,13 @@ python scripts/export_hm3d_dataset.py \
   --frames 422 \
   --width 640 --height 480 \
   --no-save-semantic \
+  --export-ros-map \
+  --map-mode explored \
+  --map-ray-count 720 \
+  --map-max-range-m 10.0 \
+  --map-resolution-m 0.05 \
+  --map-height-tolerance-m 0.20 \
+  --map-min-island-area-m2 1.0 \
   --preview
 ```
 
@@ -411,6 +431,14 @@ python scripts/export_hm3d_dataset.py \
 | `--seed` | `42` | Habitat、起点和路径随机种子 |
 | `--save-semantic` | 开启 | 保存 Habitat GT 语义实例图 |
 | `--no-save-semantic` | - | 关闭 Habitat GT 语义传感器 |
+| `--export-ros-map` | 关闭 | 输出 ROS map_server 兼容的 `map.pgm` 和 `map.yaml` |
+| `--map-resolution-m` | `0.05` | 占据地图分辨率，单位米/像素 |
+| `--map-floor-height-m` | 自动 | Habitat Y-up 楼层高度；默认取轨迹高度中位数 |
+| `--map-height-tolerance-m` | `0.20` | NavMesh 楼层切片的垂直容差 |
+| `--map-min-island-area-m2` | `1.0` | 忽略小于该面积的同层孤立 NavMesh |
+| `--map-mode` | `ground_truth` | `ground_truth` 完整楼层；`explored` 仅保留射线观测区域 |
+| `--map-ray-count` | `720` | explored 模式每个轨迹位置的 360° 射线数 |
+| `--map-max-range-m` | `10.0` | explored 模式的最大射线量程 |
 | `--preview` | 关闭 | 生成图像拼图和轨迹预览 |
 | `--overwrite` | 关闭 | 事务式替换已有非空输出 |
 
@@ -445,10 +473,61 @@ OUTPUT/
 ├── trajectory.json
 ├── traj_gt.txt
 ├── traj.txt
+├── map.pgm
+├── map.yaml
 └── export_report.json
 ```
 
-未启用语义或预览时，相应目录可能为空或不存在有效文件。
+未启用语义、地图或预览时，相应目录可能为空或不存在有效文件。
+
+## ROS 占据地图与房间推理
+
+启用 `--export-ros-map` 后，导出器根据记录轨迹自动选择楼层高度，并栅格化该高度切片内面积不小于 `--map-min-island-area-m2` 的 NavMesh island。轨迹所在 island 无论面积大小都会保留。
+
+`--map-mode ground_truth` 输出完整楼层真值地图。`--map-mode explored` 会沿轨迹的每个不同栅格位置模拟 360° 二维激光：射线经过的区域写为自由，首次击中的障碍写为占用，其余区域保持未知。灰度值采用 ROS map_server 约定：`254` 为自由、`0` 为占用、`205` 为未知。
+
+地图和 `traj.txt` 使用完全相同的 Z-up `map` 坐标系：
+
+```text
+x_map =  x_habitat
+y_map = -z_habitat
+```
+
+因此由该数据集生成的 `semantic_objects.json` 可以直接与地图交给 `semantic_room_pkg`：
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /home/weiyu/vscode_workspace/ros2_wp/install/setup.bash
+
+ros2 run semantic_room_pkg build_semantic_rooms \
+  --map-yaml /absolute/path/to/HM3D_EXPORT/map.yaml \
+  --semantic-objects /absolute/path/to/semantic_objects.json \
+  --output /absolute/path/to/semantic_rooms.json \
+  --visualization /absolute/path/to/semantic_rooms.png \
+  --wide-opening-merge 1.8
+```
+
+`--wide-opening-merge 1.8` 表示房间分割后，将共享开放边界宽度达到或超过 `1.8 m` 的相邻区域合并。它影响房间区域的数量和边界，不代表把距离房间 `1.8 m` 内的对象强制归入房间。对象归属使用独立的 `--nearest-room-distance` 参数，默认值为 `0.75 m`。
+
+房间推理终端和 JSON 中的对象计数含义如下：
+
+- `assigned_object_count`：成功归入某个房间的 confirmed 对象数量。
+- `unassigned_object_count`：参与归属计算，但无法归入任何房间的 confirmed 对象数量；对象本身仍保留在 `unassigned_objects` 中，不会丢失。
+- `assignment_reason: "outside_rooms"`：对象中心和物体足迹采样点均未落入房间标签，且默认 `0.75 m` 范围内没有可用于兜底归属的房间标签。
+- `assignment_reason: "missing_xy"`：对象记录缺少可用的地图平面坐标。
+
+本仓库 `00804` 探索地图使用 `--wide-opening-merge 1.8` 的结果为：输入 `17` 个 confirmed 对象，`15` 个归入 `room_001`，`2` 个未归属。未归属对象是 `picture_frame_2` 和 `picture_frame_57`，原因均为 `outside_rooms`。画框位于墙面，中心点容易落在墙体、未知栅格或已分割房间边界之外；当前探索地图还保留大量未知区域，因此这是合理的归属结果，不表示 YOLO/SAM 检测无效，也不表示坐标轴一定有误。
+
+可以直接检查未归属对象及原因：
+
+```bash
+python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d["unassigned_objects"], ensure_ascii=False, indent=2))' \
+  /absolute/path/to/semantic_rooms.json
+```
+
+处理未归属对象时，应先查看 `semantic_rooms.png` 中对象与房间边界的位置，并优先补充机器人探索范围或检查地图/对象坐标。只有确认对象确实紧邻正确房间时，才适当增大 `--nearest-room-distance`；盲目增大该值可能把隔墙对象分配到错误房间。`--include-candidates` 只控制是否纳入尚未 confirmed 的候选对象，与上述两个已确认画框无关。
+
+这是一张由 Habitat NavMesh 生成的仿真真值可通行地图，不是由激光 SLAM 估计得到的地图，但文件接口、尺度、原点和坐标约定与 ROS map_server 兼容。多层场景应显式设置 `--map-floor-height-m`；单层场景通常保持自动值即可。
 
 ### RGB
 

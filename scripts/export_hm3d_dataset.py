@@ -48,8 +48,12 @@ def parser() -> argparse.ArgumentParser:
         help="camera height above the agent base in metres",
     )
     p.add_argument(
-        "--display-scale", type=float, default=1.5,
+        "--display-scale", type=float, default=5.0,
         help="interactive preview scale only; saved image resolution is unchanged",
+    )
+    p.add_argument(
+        "--ui-scale", type=float, default=0.0,
+        help="controls panel/font scale; 0 detects it from screen height",
     )
     p.add_argument(
         "--min-depth-m", type=float, default=0.05,

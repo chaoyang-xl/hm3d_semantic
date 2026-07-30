@@ -9,6 +9,7 @@ from typing import Callable
 import numpy as np
 
 from .config import CaptureConfig
+from .coordinate import habitat_c2w_to_map_z_up
 from .dataset import (
     save_depth, save_rgb, save_semantic, write_json, write_traj_gt,
 )
@@ -96,7 +97,10 @@ def export_dataset(
         if config.trajectory_mode != "interactive" and len(poses) != config.frames:
             raise RuntimeError(f"wrote {len(poses)} frames, expected {config.frames}")
         write_traj_gt(partial/"traj_gt.txt", poses)
-        write_traj_gt(partial/"traj.txt", poses)
+        write_traj_gt(
+            partial/"traj.txt",
+            [habitat_c2w_to_map_z_up(pose) for pose in poses],
+        )
         write_json(partial/"trajectory.json", {"frames": trajectory})
         metadata = {
             "schema_version": 1,
@@ -106,6 +110,10 @@ def export_dataset(
             "pose_convention": "T_world_camera_gt",
             "camera_convention": "opencv_optical",
             "world_convention": "habitat_y_up",
+            "traj_world_convention": "map_z_up",
+            "traj_from_gt": (
+                "x_map=x_habitat,y_map=-z_habitat,z_map=y_habitat"
+            ),
             "scene": str(config.scene.resolve()),
             "trajectory_mode": config.trajectory_mode,
             "capture_stop_reason": getattr(source, "stop_reason", "frame_limit"),

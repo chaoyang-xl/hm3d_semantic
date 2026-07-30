@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .coordinate import rigid_transform_errors
+from .coordinate import habitat_c2w_to_map_z_up, rigid_transform_errors
 from .dataset import indexed, read_traj_gt
 from .visualization import write_previews, write_trajectory
 
@@ -37,11 +37,16 @@ def validate_dataset(
     except Exception as exc:
         result.errors.append(str(exc))
         return result
+    expected_replica_poses = np.asarray([
+        habitat_c2w_to_map_z_up(pose) for pose in poses
+    ])
     replica_compatible = replica_poses.shape == poses.shape and np.allclose(
-        replica_poses, poses, atol=1e-9
+        replica_poses, expected_replica_poses, atol=1e-9
     )
     if not replica_compatible:
-        result.errors.append("traj.txt differs from traj_gt.txt")
+        result.errors.append(
+            "traj.txt is not the Z-up map transform of traj_gt.txt"
+        )
     required = {"w","h","fx","fy","cx","cy","scale"}
     if not required.issubset(camera):
         result.errors.append("cam_params fields missing")

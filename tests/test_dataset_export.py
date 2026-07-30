@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from conftest import MockSource
+from hm3d_reconstruction.coordinate import habitat_c2w_to_map_z_up
 from hm3d_reconstruction.dataset import read_traj_gt
 from hm3d_reconstruction.exporter import export_dataset
 from hm3d_reconstruction.validator import validate_dataset
@@ -15,7 +16,8 @@ def test_mock_export_roundtrip(config):
     poses = read_traj_gt(output/"traj_gt.txt")
     replica_poses = read_traj_gt(output/"traj.txt")
     assert poses.shape == (3,4,4)
-    np.testing.assert_allclose(replica_poses, poses)
+    expected = np.asarray([habitat_c2w_to_map_z_up(pose) for pose in poses])
+    np.testing.assert_allclose(replica_poses, expected)
     assert not output.with_name("output.partial").exists()
     report=json.loads((output/"export_report.json").read_text())
     assert report["semantic_metadata_coverage"] == 1
@@ -30,7 +32,10 @@ def test_validator_rejects_mismatched_replica_trajectory(config):
     np.savetxt(output/"traj.txt", replica_poses.reshape(-1, 4))
     result = validate_dataset(output, sample_count=3, strict=True)
     assert not result.valid
-    assert "traj.txt differs from traj_gt.txt" in result.errors
+    assert (
+        "traj.txt is not the Z-up map transform of traj_gt.txt"
+        in result.errors
+    )
 
 
 def test_interactive_export_can_save_before_frame_limit(config):

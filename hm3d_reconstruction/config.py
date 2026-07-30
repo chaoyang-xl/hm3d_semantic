@@ -15,7 +15,8 @@ class CaptureConfig:
     height: int = 480
     hfov_deg: float = 79.0
     sensor_height: float = 0.88
-    display_scale: float = 1.5
+    display_scale: float = 5.0
+    ui_scale: float = 0.0
     min_depth_m: float = 0.05
     max_depth_m: float = 10.0
     trajectory_mode: str = "waypoint"
@@ -35,8 +36,10 @@ class CaptureConfig:
             raise ValueError(f"scene dataset config not found: {self.scene_dataset_config}")
         if self.frames <= 0 or self.width <= 0 or self.height <= 0:
             raise ValueError("frames and resolution must be positive")
-        if not 0.5 <= self.display_scale <= 3.0:
-            raise ValueError("display_scale must be in [0.5, 3.0]")
+        if not 0.5 <= self.display_scale <= 6.0:
+            raise ValueError("display_scale must be in [0.5, 6.0]")
+        if self.ui_scale != 0.0 and not 0.8 <= self.ui_scale <= 3.0:
+            raise ValueError("ui_scale must be 0 (auto) or in [0.8, 3.0]")
         if not 0 < self.hfov_deg < 180:
             raise ValueError("hfov must be in (0, 180)")
         if self.forward_step <= 0 or not 0 < self.turn_angle_deg <= 180:

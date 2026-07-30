@@ -3,6 +3,12 @@ from __future__ import annotations
 import numpy as np
 
 C_HABITAT_FROM_OPENCV = np.diag([1.0, -1.0, -1.0, 1.0])
+C_MAP_FROM_HABITAT = np.array([
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, -1.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+])
 
 
 def rigid_transform_errors(matrix: np.ndarray, atol: float = 1e-5) -> list[str]:
@@ -34,6 +40,14 @@ def habitat_sensor_pose_to_opencv_c2w(pose: np.ndarray) -> np.ndarray:
     habitat_pose = validate_rigid_transform(pose, "Habitat sensor pose")
     return validate_rigid_transform(
         habitat_pose @ C_HABITAT_FROM_OPENCV, "OpenCV camera pose"
+    )
+
+
+def habitat_c2w_to_map_z_up(pose: np.ndarray) -> np.ndarray:
+    """Rotate a Habitat Y-up camera-to-world pose into a Z-up map frame."""
+    habitat_pose = validate_rigid_transform(pose, "Habitat-world camera pose")
+    return validate_rigid_transform(
+        C_MAP_FROM_HABITAT @ habitat_pose, "Z-up map camera pose"
     )
 
 

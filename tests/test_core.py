@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from hm3d_reconstruction.coordinate import (
-    C_HABITAT_FROM_OPENCV, habitat_sensor_pose_to_opencv_c2w,
+    C_HABITAT_FROM_OPENCV, C_MAP_FROM_HABITAT,
+    habitat_c2w_to_map_z_up, habitat_sensor_pose_to_opencv_c2w,
     rigid_transform_errors,
 )
 from hm3d_reconstruction.depth import depth_meters_to_uint16_mm
@@ -25,6 +26,15 @@ def test_coordinate_conversion():
     pose = habitat_sensor_pose_to_opencv_c2w(np.eye(4))
     np.testing.assert_allclose(pose, C_HABITAT_FROM_OPENCV)
     assert not rigid_transform_errors(pose)
+
+
+def test_habitat_y_up_pose_converts_to_map_z_up():
+    pose = np.eye(4)
+    pose[:3, 3] = [1.0, 2.0, 3.0]
+    converted = habitat_c2w_to_map_z_up(pose)
+    np.testing.assert_allclose(converted, C_MAP_FROM_HABITAT @ pose)
+    np.testing.assert_allclose(converted[:3, 3], [1.0, -3.0, 2.0])
+    assert np.linalg.det(converted[:3, :3]) == pytest.approx(1.0)
 
 
 def test_invalid_rigid_matrix():

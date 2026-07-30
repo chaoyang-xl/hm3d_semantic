@@ -45,7 +45,7 @@ def interactive_displacement(yaw: float, distance: float) -> np.ndarray:
 
 
 class TkInteractiveWindow:
-    """Live RGB viewer with a non-blocking keyboard command queue."""
+    """Large live RGB viewer with controls and capture telemetry."""
 
     KEY_COMMANDS = {
         "w": "forward",
@@ -58,7 +58,9 @@ class TkInteractiveWindow:
         "escape": "abort",
     }
 
-    def __init__(self, width: int, height: int, scale: float = 1.5):
+    def __init__(
+        self, width: int, height: int, scale: float = 5.0, ui_scale: float = 0.0
+    ):
         try:
             import tkinter as tk
             from PIL import ImageTk
@@ -76,19 +78,135 @@ class TkInteractiveWindow:
         self._image_tk = ImageTk
         self._commands = deque()
         self._closed = False
-        self.root.title("HM3D interactive capture")
-        self.display_size = (
-            max(1, int(round(width * scale))),
-            max(1, int(round(height * scale))),
+        self._photo = None
+        self.root.title("HM3D Interactive Capture")
+        self.root.configure(bg="#11151a")
+
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        effective_ui_scale = (
+            float(ui_scale)
+            if ui_scale > 0.0
+            else float(np.clip(screen_height / 1440.0, 1.0, 2.25))
         )
-        self.canvas = tk.Label(self.root)
-        self.canvas.pack()
-        self.status = tk.Label(self.root, anchor="w", padx=8, pady=5)
-        self.status.pack(fill="x")
+        self.ui_scale = effective_ui_scale
+        self._font = lambda size, weight="normal", family="TkDefaultFont": (
+            family, max(9, int(round(size * effective_ui_scale))), weight
+        )
+        panel_width = int(round(360 * effective_ui_scale))
+        outer_padding = int(round(12 * effective_ui_scale))
+        panel_padding = int(round(18 * effective_ui_scale))
+        available_width = max(width, screen_width - panel_width - 90)
+        available_height = max(height, screen_height - 150)
+        fitted_scale = min(scale, available_width / width, available_height / height)
+        fitted_scale = max(0.5, fitted_scale)
+        self.display_size = (
+            max(1, int(round(width * fitted_scale))),
+            max(1, int(round(height * fitted_scale))),
+        )
+        window_width = self.display_size[0] + panel_width + 3 * outer_padding
+        window_height = self.display_size[1] + 2 * outer_padding
+        left = max(0, (screen_width - window_width) // 2)
+        top = max(0, (screen_height - window_height) // 2)
+        self.root.geometry(f"{window_width}x{window_height}+{left}+{top}")
+        self.root.minsize(min(window_width, 960), min(window_height, 620))
+
+        body = tk.Frame(
+            self.root, bg="#11151a", padx=outer_padding, pady=outer_padding
+        )
+        body.pack(fill="both", expand=True)
+        preview_frame = tk.Frame(body, bg="#050607", bd=1, relief="solid")
+        preview_frame.pack(side="left", fill="both", expand=True)
+        self.canvas = tk.Label(preview_frame, bg="#050607")
+        self.canvas.pack(fill="both", expand=True)
+
+        panel = tk.Frame(
+            body, width=panel_width, bg="#1b2128",
+            padx=panel_padding, pady=int(round(16 * effective_ui_scale)),
+        )
+        panel.pack(
+            side="right", fill="y",
+            padx=(int(round(12 * effective_ui_scale)), 0),
+        )
+        panel.pack_propagate(False)
+        tk.Label(
+            panel, text="HM3D CAPTURE", bg="#1b2128", fg="#f2f5f7",
+            font=self._font(17, "bold"), anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            panel, text="Interactive RGB-D recorder", bg="#1b2128",
+            fg="#8f9ba8", font=self._font(11), anchor="w",
+        ).pack(fill="x", pady=(2, 14))
+
+        self.status_label = tk.Label(
+            panel, text="PAUSED", bg="#38424d", fg="#ffffff",
+            font=self._font(13, "bold"),
+            padx=int(round(10 * effective_ui_scale)),
+            pady=int(round(8 * effective_ui_scale)),
+        )
+        self.status_label.pack(fill="x")
+        self.frame_label = tk.Label(
+            panel, text="Frames 0/0", bg="#1b2128", fg="#d6dde4",
+            font=self._font(12, "bold"), anchor="w", pady=10,
+        )
+        self.frame_label.pack(fill="x")
+
+        self._section_title(panel, "CONTROLS")
+        controls = (
+            ("W", "Forward"), ("S", "Backward"),
+            ("A", "Turn left"), ("D", "Turn right"),
+            ("R", "Start / resume recording"), ("P", "Pause recording"),
+            ("Q", "Validate and save"), ("Esc", "Keep validated partial"),
+        )
+        controls_frame = tk.Frame(panel, bg="#1b2128")
+        controls_frame.pack(fill="x", pady=(2, 10))
+        for row, (key, label) in enumerate(controls):
+            key_label = tk.Label(
+                controls_frame, text=key, width=5, bg="#2b343e", fg="#ffffff",
+                font=self._font(11, "bold"),
+                padx=int(round(5 * effective_ui_scale)),
+                pady=int(round(4 * effective_ui_scale)),
+            )
+            key_label.grid(row=row, column=0, sticky="w", pady=2)
+            tk.Label(
+                controls_frame, text=label, bg="#1b2128", fg="#c3ccd5",
+                anchor="w", padx=int(round(9 * effective_ui_scale)),
+                font=self._font(11),
+            ).grid(row=row, column=1, sticky="w")
+
+        self._section_title(panel, "LIVE STATE")
+        self.info_vars = {
+            key: tk.StringVar(value="-")
+            for key in ("position", "yaw", "action", "collision", "step", "output")
+        }
+        fields = (
+            ("Position XYZ", "position"),
+            ("Heading", "yaw"),
+            ("Last action", "action"),
+            ("Collision", "collision"),
+            ("Motion step", "step"),
+            ("Output", "output"),
+        )
+        for label, key in fields:
+            tk.Label(
+                panel, text=label, bg="#1b2128", fg="#788694",
+                font=self._font(10), anchor="w",
+            ).pack(fill="x", pady=(5, 0))
+            tk.Label(
+                panel, textvariable=self.info_vars[key], bg="#1b2128",
+                fg="#edf1f4", font=self._font(10, family="TkFixedFont"), anchor="w",
+                justify="left", wraplength=int(round(320 * effective_ui_scale)),
+            ).pack(fill="x")
+
         self.root.bind("<KeyPress>", self._on_key)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.root.focus_force()
-        self._photo = None
+        self.root.after(100, self.root.focus_force)
+
+    def _section_title(self, parent, text: str) -> None:
+        self._tk.Label(
+            parent, text=text, bg="#1b2128", fg="#62b6ff",
+            font=self._font(10, "bold"), anchor="w",
+        ).pack(fill="x", pady=(8, 5))
 
     def _on_key(self, event) -> None:
         command = self.KEY_COMMANDS.get(str(event.keysym).casefold())
@@ -100,8 +218,32 @@ class TkInteractiveWindow:
             self._commands.append("abort")
             self._closed = True
 
+    def _update_state(
+        self, recording: bool, frames: int, maximum: int, info: dict
+    ) -> None:
+        state = "RECORDING" if recording else "PAUSED"
+        self.status_label.configure(
+            text=state,
+            bg="#b42336" if recording else "#38424d",
+        )
+        self.frame_label.configure(text=f"Frames {frames}/{maximum}")
+        position = info.get("position", [0.0, 0.0, 0.0])
+        self.info_vars["position"].set(
+            "  ".join(f"{float(value):.3f}" for value in position)
+        )
+        self.info_vars["yaw"].set(f"{float(info.get('yaw_deg', 0.0)):.1f} deg")
+        self.info_vars["action"].set(str(info.get("action", "preview")))
+        collision = bool(info.get("collision", False))
+        self.info_vars["collision"].set("YES" if collision else "no")
+        self.info_vars["step"].set(
+            f"{float(info.get('step_m', 0.0)):.2f} m / "
+            f"{float(info.get('turn_deg', 0.0)):.1f} deg"
+        )
+        self.info_vars["output"].set(str(info.get("output", "-")))
+
     def wait_command(
-        self, rgb: np.ndarray, recording: bool, frames: int, maximum: int
+        self, rgb: np.ndarray, recording: bool, frames: int, maximum: int,
+        info: Optional[dict] = None,
     ) -> str:
         from PIL import Image
 
@@ -114,8 +256,7 @@ class TkInteractiveWindow:
             preview = preview.resize(self.display_size, resampling.BILINEAR)
         self._photo = self._image_tk.PhotoImage(preview)
         self.canvas.configure(image=self._photo)
-        state = "RECORDING" if recording else "PAUSED"
-        self.status.configure(text=f"{state}    frames {frames}/{maximum}")
+        self._update_state(recording, frames, maximum, info or {})
         while not self._commands:
             if self._closed:
                 return "abort"
@@ -346,15 +487,29 @@ class HabitatCapture:
 
     def _interactive_frames(self) -> Iterator[CapturedFrame]:
         window = TkInteractiveWindow(
-            self.config.width, self.config.height, self.config.display_scale
+            self.config.width, self.config.height, self.config.display_scale,
+            self.config.ui_scale,
         )
         self._interactive_window = window
         recording = False
         captured = 0
         preview = self._capture(0, "preview", False)
         while captured < self.config.frames:
+            preview_state = preview.trajectory
+            preview_yaw = yaw_from_quaternion_xyzw(
+                np.asarray(preview_state["agent_rotation_xyzw"], dtype=float)
+            )
             command = window.wait_command(
-                preview.rgb, recording, captured, self.config.frames
+                preview.rgb, recording, captured, self.config.frames,
+                {
+                    "position": preview_state["agent_position"],
+                    "yaw_deg": math.degrees(preview_yaw),
+                    "action": preview_state["action"],
+                    "collision": preview_state["collision"],
+                    "step_m": self.config.forward_step,
+                    "turn_deg": self.config.turn_angle_deg,
+                    "output": str(self.config.output.resolve()),
+                },
             )
             if command == "abort":
                 self.stop_reason = "operator_abort"

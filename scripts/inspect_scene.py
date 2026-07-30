@@ -16,8 +16,17 @@ def main() -> int:
     p.add_argument("--scene", required=True, type=Path)
     p.add_argument("--scene-dataset-config", required=True, type=Path)
     p.add_argument("--output", required=True, type=Path)
+    p.add_argument(
+        "--save-semantic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="load Habitat semantic instances; disable with --no-save-semantic",
+    )
     args = p.parse_args()
-    config = CaptureConfig(args.scene, args.scene_dataset_config, args.output, frames=1)
+    config = CaptureConfig(
+        args.scene, args.scene_dataset_config, args.output, frames=1,
+        save_semantic=args.save_semantic,
+    )
     config.validate()
     source = HabitatCapture(config)
     try:
